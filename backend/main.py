@@ -37,7 +37,7 @@ logger.addHandler(file_handler)
 # Also add a console handler for development visibility
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(log_formatter)
-logger.addHandler(console_handler)
+# logger.addHandler(console_handler)
 
 
 # --- The rest of your application logic ---
