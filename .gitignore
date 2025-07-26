@@ -4,8 +4,8 @@
 # ------------------------
 # Virtual environment
 /backend/venv/
-/backend/.venv/
 venv/
+/backend/.venv/
 
 # Python cache files
 __pycache__/
@@ -45,6 +45,9 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+# --- NEW: Log files ---
+*.log
 
 
 # Node.js / React Frontend
