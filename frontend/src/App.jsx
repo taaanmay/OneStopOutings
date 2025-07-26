@@ -144,14 +144,21 @@ function App() {
     setLoading(true);
     setError(null);
     setPlan(null);
+
+    // --- FIX: Add the 'mode' to the payload ---
+    const preferences = {
+      budget: parseInt(budget),
+      interests: interests,
+      mode: mode, // This was missing
+    };
+
     try {
-      // We will need to update the backend to accept the 'mode' parameter later
       const response = await fetch('http://127.0.0.1:8000/plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ budget: parseInt(budget), interests }),
+        body: JSON.stringify(preferences),
       });
-      if (!response.ok) { const err = await response.json(); throw new Error(err.detail); }
+      if (!response.ok) { const err = await response.json(); throw new Error(err.detail || 'Something went wrong'); }
       setPlan(await response.json());
     } catch (err) { setError(err.message); } 
     finally { setLoading(false); }
@@ -160,11 +167,18 @@ function App() {
   const handleRegenerate = async (indexToReplace) => {
     setRegeneratingIndex(indexToReplace);
     setError(null);
+
+    // --- FIX: Add the 'mode' to the user_preferences payload ---
     const payload = {
       current_plan: plan.plan,
       event_index_to_replace: indexToReplace,
-      user_preferences: { budget: parseInt(budget), interests },
+      user_preferences: {
+        budget: parseInt(budget),
+        interests: interests,
+        mode: mode, // This was missing
+      },
     };
+
     try {
       const response = await fetch('http://127.0.0.1:8000/regenerate-event', {
         method: 'POST',
