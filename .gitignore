@@ -4,6 +4,7 @@
 # ------------------------
 # Virtual environment
 /backend/venv/
+/backend/.venv/
 venv/
 
 # Python cache files
