@@ -1,32 +1,29 @@
 # backend/main.py
 
 from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
+from fastapi.middleware.cors import CORSMiddleware
 
-# --- 1. Define our Data Structures ---
-
-class UserPreferences(BaseModel):
-    """Defines the data we expect from the user/frontend."""
-    budget: int
-    interests: List[str]
-    # We'll add location, dietary needs, etc. later
-    
-class Event(BaseModel):
-    """Defines a single event in the outing."""
-    type: str
-    name: str
-    cost: int
-    duration: int # in minutes
-    
-class OutingPlan(BaseModel):
-    """Defines the final plan we send back to the user."""
-    plan: List[Event]
-    total_cost: int
-    total_duration: int
+# --- 1. Import your refactored data structures ---
+from model.models import UserPreferences, Event, OutingPlan
 
 # --- Initialize our FastAPI app ---
 app = FastAPI()
+
+# --- NEW: Add CORS Middleware ---
+# This allows our frontend (running on a different port) to communicate with our backend.
+origins = [
+    "http://localhost:5173", # The default port for Vite React dev server
+    "http://127.0.0.1:5173",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"], # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"], # Allows all headers
+)
 
 
 # --- 2. Create our API Endpoint ---
