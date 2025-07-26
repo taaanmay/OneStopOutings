@@ -2,30 +2,27 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root {
-  --primary-color: #007bff;
-  --secondary-color: #6c757d;
-  --background-color: #f8f9fa;
+  --primary-color: #4f46e5; /* A modern purple */
+  --secondary-color: #6b7280;
+  --background-color: #f3f4f6; /* New background */
   --surface-color: #ffffff;
-  --text-color: #212529;
-  --border-color: #dee2e6;
-  --shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  --text-color: #111827;
+  --border-color: #e5e7eb;
+  --shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0,0,0,0.08);
 }
 
-/* --- NEW: Universal Box Sizing --- */
 *, *::before, *::after {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  font-family: 'Inter', sans-serif;
   background-color: var(--background-color);
   color: var(--text-color);
 }
 
-/* --- Main Layout & Header --- */
+/* --- Main Layout & Header (Website Layout) --- */
 .app-container {
   display: flex;
   flex-direction: column;
@@ -112,6 +109,36 @@ body {
   font-weight: 600;
   margin-bottom: 0.75rem;
 }
+
+/* --- Mode Toggle (from new design) --- */
+.mode-toggle {
+  display: flex;
+  background-color: var(--background-color);
+  border-radius: 50px;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+}
+.mode-toggle button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: none;
+  background: transparent;
+  padding: 0.5rem 1rem;
+  border-radius: 50px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  color: var(--text-color); 
+}
+.mode-toggle button.active {
+  background: var(--primary-color);
+  color: white;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+}
+
 
 .budget-control {
   display: flex;
@@ -224,44 +251,74 @@ body {
   gap: 1rem;
 }
 
-.event-card {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
+/* --- NEW Itinerary Card Style --- */
+.itinerary-card {
+  background: var(--surface-color);
+  border-radius: 12px;
   padding: 1rem;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-}
-.event-icon {
-  flex-shrink: 0;
-  width: 48px;
-  height: 48px;
   display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.card-content {
+  display: flex;
+  gap: 1rem;
   align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background-color: var(--background-color);
-  color: var(--primary-color);
+}
+.image-placeholder {
+  width: 60px;
+  height: 60px;
+  background: var(--background-color);
+  border-radius: 8px;
+  flex-shrink: 0;
 }
 .event-details {
   flex-grow: 1;
 }
 .event-type {
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: 0.75rem;
+  font-weight: 700;
   color: var(--secondary-color);
   text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 .event-name {
-  margin: 0.25rem 0;
+  margin: 0.1rem 0;
   font-size: 1.1rem;
+  font-weight: 600;
 }
-.event-meta {
+.card-footer {
   display: flex;
-  gap: 1rem;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 1.5rem;
+  font-weight: 500;
   color: var(--secondary-color);
   font-size: 0.9rem;
 }
+.regenerate-button {
+  background: none;
+  border: none;
+  color: var(--secondary-color);
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  margin-left: auto; /* Pushes button to the right */
+}
+.regenerate-button:hover:not(:disabled) {
+  color: var(--primary-color);
+  background-color: var(--background-color);
+}
+.regenerate-button:disabled {
+  cursor: not-allowed;
+  color: var(--border-color);
+}
+
 
 /* --- Empty/Error/Loading States --- */
 .empty-card, .error-card {
@@ -270,7 +327,7 @@ body {
   color: var(--secondary-color);
 }
 .empty-card svg, .error-card svg {
-  color: var(--border-color);
+  color: #cbd5e1;
   margin-bottom: 1rem;
 }
 .error-card {
@@ -287,7 +344,7 @@ body {
 }
 .skeleton-line {
   height: 20px;
-  background-color: var(--background-color);
+  background-color: #e2e8f0;
   border-radius: 4px;
   margin-bottom: 10px;
 }
@@ -297,8 +354,8 @@ body {
   margin-bottom: 20px;
 }
 .skeleton-event {
-  height: 70px;
-  background-color: var(--background-color);
-  border-radius: 8px;
+  height: 100px; /* Adjusted for new card height */
+  background-color: #e2e8f0;
+  border-radius: 12px;
   margin-top: 1rem;
 }
