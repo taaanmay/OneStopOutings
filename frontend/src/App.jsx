@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'; // Import useEffect
+import { useState, useEffect } from 'react';
 import { MapPin, DollarSign, Users, Clock, Coffee, Utensils, Leaf, Music, Film, Beer, ShoppingBag, LoaderCircle, AlertCircle, Sparkles, RefreshCw, Dice5, Star } from 'lucide-react';
 import './App.css';
 
@@ -10,7 +10,7 @@ const Header = () => (
       <MapPin className="logo-icon" size={32} />
       <h1>OneStopOutings</h1>
     </div>
-    <p>Your personal Dublin day planner</p>
+    <p>Your perfect day in Dublin, planned in seconds. | Created by Tanmay Kaushik</p>
   </header>
 );
 
@@ -140,9 +140,8 @@ function App() {
   const [error, setError] = useState(null);
   const [regeneratingIndex, setRegeneratingIndex] = useState(null);
 
-  // --- NEW: useEffect to change the background based on the mode ---
   useEffect(() => {
-    document.body.className = ''; // Clear previous classes
+    document.body.className = '';
     document.body.classList.add(`theme-${mode}`);
   }, [mode]);
 
@@ -161,7 +160,8 @@ function App() {
     };
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/plan', {
+      // --- UPDATED: Use relative URL for the API call ---
+      const response = await fetch('/api/plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(preferences),
@@ -193,7 +193,8 @@ function App() {
     };
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/regenerate-event', {
+      // --- UPDATED: Use relative URL for the API call ---
+      const response = await fetch('/api/regenerate-event', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
