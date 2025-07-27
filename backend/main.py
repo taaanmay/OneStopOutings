@@ -248,6 +248,7 @@ def get_local_replacement_event(request: RegenerateRequest) -> Optional[Event]:
 
 @app.post("/plan", response_model=OutingPlan)
 async def create_outing_plan(preferences: UserPreferences):
+    logging.info(f"Creating outing plan with preferences: {preferences}")
     cache_key = f"plan-{preferences.mode}-{preferences.budget}-{'-'.join(sorted(preferences.interests))}"
     if cache_key in api_cache:
         cached_plan_data, timestamp = api_cache[cache_key]
