@@ -15,8 +15,8 @@
   ],
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "/backend/main.py"
+      "source": "/api/(.*)",
+      "destination": "/api/index"
     }
   ]
 }
