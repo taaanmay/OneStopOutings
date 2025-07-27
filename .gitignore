@@ -80,6 +80,9 @@ lerna-debug.log*
 .env.test.local
 .env.production.local
 
+# --- NEW: Persistent Image Cache ---
+learned_images.json
+
 
 # General / OS-specific
 # ---------------------

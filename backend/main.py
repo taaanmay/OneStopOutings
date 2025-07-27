@@ -20,11 +20,33 @@ from utils.popular_spots import PopularSpots
 
 # --- Cache and Limit Configuration ---
 api_cache: Dict[str, Tuple[OutingPlan, float]] = {}
-image_cache: Dict[str, Tuple[str, float]] = {} # Cache for image URLs
 CACHE_TTL_SECONDS = 86400 # 24 hours
 regeneration_counts: Dict[str, int] = {}
 MAX_REGENERATIONS = 5
 LOCAL_REGEN_LIMIT = 3 # First 3 regenerations will prioritize local data
+
+# --- NEW: Persistent Image Cache Setup ---
+IMAGE_CACHE_FILE = "learned_images.json"
+image_cache: Dict[str, str] = {} # Will now store URL directly
+
+def load_image_cache():
+    """Loads the image cache from the JSON file at startup."""
+    if os.path.exists(IMAGE_CACHE_FILE):
+        with open(IMAGE_CACHE_FILE, 'r') as f:
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                return {} # Return empty dict if file is corrupted
+    return {}
+
+def save_image_cache():
+    """Saves the current in-memory image cache to the JSON file."""
+    with open(IMAGE_CACHE_FILE, 'w') as f:
+        json.dump(image_cache, f, indent=2)
+
+# Load the cache when the application starts
+image_cache = load_image_cache()
+
 
 # Configure Logging
 log_directory = "logs"
@@ -61,7 +83,7 @@ def get_all_popular_spot_names():
 all_popular_names = get_all_popular_spot_names()
 
 
-# --- UPDATED: Helper to dynamically add events to the local dictionary ---
+# --- Helper to dynamically add events to the local dictionary ---
 def add_event_to_local_dictionary(event: Event):
     """Dynamically adds a new event to the in-memory popular_spots dictionary if it's not already there."""
     logging.info(f"Checking if '{event.name}' can be added to local dictionary.")
@@ -77,7 +99,7 @@ def add_event_to_local_dictionary(event: Event):
                 "name": event.name,
                 "cost": event.cost,
                 "duration": event.duration,
-                "image_url": event.image_url # Store the image URL
+                "image_url": event.image_url
             }
             PopularSpots.spots[category].append(new_spot)
             logging.info(f"Successfully added '{event.name}' with its image to the '{category}' category in local data.")
@@ -87,13 +109,11 @@ def add_event_to_local_dictionary(event: Event):
         logging.warning(f"Category '{category}' not found in local data for event '{event.name}'. Cannot add.")
 
 
-# --- Function to get and cache images ---
+# --- UPDATED: Function to get images with persistent caching ---
 async def get_image_for_event(event_name: str) -> str:
     if event_name in image_cache:
-        url, timestamp = image_cache[event_name]
-        if time.time() - timestamp < CACHE_TTL_SECONDS:
-            logging.info(f"IMAGE CACHE HIT for: {event_name}")
-            return url
+        logging.info(f"IMAGE CACHE HIT for: {event_name}")
+        return image_cache[event_name]
     
     logging.info(f"IMAGE CACHE MISS for: {event_name}. Fetching from Pexels.")
     pexels_api_key = os.getenv("PEXELS_API_KEY")
@@ -112,7 +132,8 @@ async def get_image_for_event(event_name: str) -> str:
             data = response.json()
             if data['photos']:
                 image_url = data['photos'][0]['src']['tiny']
-                image_cache[event_name] = (image_url, time.time())
+                image_cache[event_name] = image_url # Add to in-memory cache
+                save_image_cache() # Save updated cache to file
                 return image_url
     except Exception as e:
         logging.error(f"Failed to fetch image for '{event_name}'. Error: {e}")
@@ -272,7 +293,6 @@ async def create_outing_plan(preferences: UserPreferences):
     for event in parsed_events:
         if not event.image_url:
             event.image_url = await get_image_for_event(event.name)
-        # Add the event to our local dictionary if it came from the LLM
         if is_llm_plan:
             add_event_to_local_dictionary(event)
 
@@ -315,7 +335,6 @@ async def regenerate_event(request: RegenerateRequest):
     logging.info(f"Received /regenerate-event request for outing_id {request.outing_id}, index: {request.event_index_to_replace}. Count: {current_regen_count}")
     
     new_event = None
-    # --- Tiered regeneration logic ---
     if current_regen_count < LOCAL_REGEN_LIMIT:
         logging.info("Attempting local-first regeneration.")
         new_event = get_local_replacement_event(request)
@@ -332,7 +351,6 @@ async def regenerate_event(request: RegenerateRequest):
     if not new_event.image_url:
         new_event.image_url = await get_image_for_event(new_event.name)
     
-    # --- NEW: Add the newly generated event to our local data ---
     add_event_to_local_dictionary(new_event)
 
     updated_plan_events = request.current_plan
