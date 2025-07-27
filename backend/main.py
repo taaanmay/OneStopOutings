@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 # Import the models
 from model.models import UserPreferences, Event, OutingPlan, RegenerateRequest
@@ -20,10 +20,10 @@ from utils.popular_spots import PopularSpots
 
 # --- Cache and Limit Configuration ---
 api_cache: Dict[str, Tuple[OutingPlan, float]] = {}
-image_cache: Dict[str, Tuple[str, float]] = {} # NEW: Cache for image URLs
 CACHE_TTL_SECONDS = 86400 # 24 hours
 regeneration_counts: Dict[str, int] = {}
 MAX_REGENERATIONS = 5
+LOCAL_REGEN_LIMIT = 3 # First 3 regenerations will prioritize local data
 
 # Configure Logging
 log_directory = "logs"
@@ -58,41 +58,6 @@ def get_all_popular_spot_names():
     return list(names)
 
 all_popular_names = get_all_popular_spot_names()
-
-
-# --- NEW: Function to get and cache images ---
-async def get_image_for_event(event_name: str) -> str:
-    if event_name in image_cache:
-        url, timestamp = image_cache[event_name]
-        if time.time() - timestamp < CACHE_TTL_SECONDS:
-            logging.info(f"IMAGE CACHE HIT for: {event_name}")
-            return url
-    
-    logging.info(f"IMAGE CACHE MISS for: {event_name}. Fetching from Pexels.")
-    pexels_api_key = os.getenv("PEXELS_API_KEY")
-    if not pexels_api_key:
-        logging.warning("PEXELS_API_KEY not found. Cannot fetch images.")
-        return "" # Return empty string if no key
-
-    headers = {"Authorization": pexels_api_key}
-    # Search for the event name + Dublin for more relevant results
-    query = f"{event_name} Dublin"
-    url = f"https://api.pexels.com/v1/search?query={query}&per_page=1"
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            if data['photos']:
-                # We use the 'tiny' version for the preview icon
-                image_url = data['photos'][0]['src']['tiny']
-                image_cache[event_name] = (image_url, time.time())
-                return image_url
-    except Exception as e:
-        logging.error(f"Failed to fetch image for '{event_name}'. Error: {e}")
-    
-    return "" # Return empty string on failure
 
 
 # --- LLM and Helper Functions ---
@@ -135,7 +100,8 @@ async def generate_plan_with_llm(preferences: UserPreferences):
             logging.error(f"Unexpected API response structure: {result}")
             raise HTTPException(status_code=500, detail="Could not parse LLM response.")
 
-async def get_single_replacement_event(request: RegenerateRequest):
+# --- NEW: Function to get replacement from LLM (with local fallback) ---
+async def get_llm_replacement_event(request: RegenerateRequest) -> Event:
     try:
         logging.info("Attempting to get replacement from LLM first.")
         api_key = os.getenv("GOOGLE_API_KEY")
@@ -174,23 +140,28 @@ async def get_single_replacement_event(request: RegenerateRequest):
                 raise ValueError("LLM response did not contain candidates.")
     except Exception as e:
         logging.warning(f"LLM call failed for regeneration, attempting local fallback. Error: {e}")
-        event_to_replace = request.current_plan[request.event_index_to_replace]
-        category = "Activity"
-        if "museum" in event_to_replace.type.lower(): category = "Museum"
-        elif "pub" in event_to_replace.type.lower(): category = "Pub"
-        elif any(food_type in event_to_replace.type.lower() for food_type in ["food", "lunch", "dinner", "breakfast"]): category = "Food"
-        
-        potential_replacements = PopularSpots.spots.get(category, [])
-        existing_names = {e.name for e in request.current_plan}
-        valid_choices = [spot for spot in potential_replacements if spot["name"] not in existing_names]
-        
-        if valid_choices:
-            logging.info(f"Found {len(valid_choices)} local candidates for replacement. Using local data.")
-            local_choice = random.choice(valid_choices)
-            return Event(**local_choice)
-        else:
-            logging.error("Local fallback failed: No valid replacements found.")
-            raise HTTPException(status_code=500, detail="Could not find a suitable replacement.")
+        return get_local_replacement_event(request) # Fallback to local
+
+# --- NEW: Function to get replacement from local data ONLY ---
+def get_local_replacement_event(request: RegenerateRequest) -> Optional[Event]:
+    logging.info("Attempting to find a replacement from local data.")
+    event_to_replace = request.current_plan[request.event_index_to_replace]
+    category = "Activity"
+    if "museum" in event_to_replace.type.lower(): category = "Museum"
+    elif "pub" in event_to_replace.type.lower(): category = "Pub"
+    elif any(food_type in event_to_replace.type.lower() for food_type in ["food", "lunch", "dinner", "breakfast"]): category = "Food"
+    
+    potential_replacements = PopularSpots.spots.get(category, [])
+    existing_names = {e.name for e in request.current_plan}
+    valid_choices = [spot for spot in potential_replacements if spot["name"] not in existing_names]
+    
+    if valid_choices:
+        logging.info(f"Found {len(valid_choices)} local candidates for replacement.")
+        local_choice = random.choice(valid_choices)
+        return Event(**local_choice)
+    else:
+        logging.warning("No suitable local replacement found.")
+        return None
 
 
 # --- API Endpoints ---
@@ -239,9 +210,9 @@ async def create_outing_plan(preferences: UserPreferences):
         logging.error("Failed to generate a valid plan after all attempts.")
         raise HTTPException(status_code=500, detail="Failed to generate a valid plan.")
     
-    # --- NEW: Fetch images for each event in the plan ---
     for event in parsed_events:
-        event.image_url = await get_image_for_event(event.name)
+        if not event.image_url:
+            event.image_url = await get_image_for_event(event.name)
 
     total_cost = sum(event.cost for event in parsed_events)
     total_duration = sum(event.duration for event in parsed_events)
@@ -279,11 +250,26 @@ async def regenerate_event(request: RegenerateRequest):
             logging.info(f"CACHE EXPIRED for regeneration key: {cache_key}")
             del api_cache[cache_key]
 
-    logging.info(f"Received /regenerate-event request for outing_id {request.outing_id}, index: {request.event_index_to_replace}")
-    new_event = await get_single_replacement_event(request)
+    logging.info(f"Received /regenerate-event request for outing_id {request.outing_id}, index: {request.event_index_to_replace}. Count: {current_regen_count}")
     
-    # --- NEW: Fetch image for the new event ---
-    new_event.image_url = await get_image_for_event(new_event.name)
+    new_event = None
+    # --- UPDATED: Tiered regeneration logic ---
+    if current_regen_count < LOCAL_REGEN_LIMIT:
+        logging.info("Attempting local-first regeneration.")
+        new_event = get_local_replacement_event(request)
+        if not new_event:
+            # Escalate to LLM if local fails
+            logging.warning("Local-first failed, escalating to LLM.")
+            new_event = await get_llm_replacement_event(request)
+    else:
+        logging.info("Local limit reached, using LLM-first regeneration.")
+        new_event = await get_llm_replacement_event(request)
+
+    if not new_event:
+        raise HTTPException(status_code=500, detail="Could not find a suitable replacement from any source.")
+
+    if not new_event.image_url:
+        new_event.image_url = await get_image_for_event(new_event.name)
 
     updated_plan_events = request.current_plan
     updated_plan_events[request.event_index_to_replace] = new_event
