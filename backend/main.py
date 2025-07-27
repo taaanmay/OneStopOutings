@@ -371,3 +371,6 @@ async def regenerate_event(request: RegenerateRequest):
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the OneStopOutings API"}
+
+from mangum import Mangum
+handler = Mangum(app)  # Required for Vercel Python runtime
