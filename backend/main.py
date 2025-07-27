@@ -4,6 +4,7 @@ import logging
 import time
 import json
 import uuid
+import random
 from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,11 +14,13 @@ from typing import List, Dict, Tuple
 # Import the models
 from model.models import UserPreferences, Event, OutingPlan, RegenerateRequest
 
-# --- In-Memory Cache with TTL ---
-api_cache: Dict[str, Tuple[OutingPlan, float]] = {}
-CACHE_TTL_SECONDS = 86400
+# --- Local data dictionary ---
+from utils.popular_spots import PopularSpots
 
-# --- Regeneration Limit Tracking ---
+
+# --- Cache and Limit Configuration ---
+api_cache: Dict[str, Tuple[OutingPlan, float]] = {}
+CACHE_TTL_SECONDS = 86400 # 24 hours
 regeneration_counts: Dict[str, int] = {}
 MAX_REGENERATIONS = 5
 
@@ -45,7 +48,18 @@ app = FastAPI()
 origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# --- LLM and Parsing Functions ---
+# --- NEW: Helper to get all popular spot names ---
+def get_all_popular_spot_names():
+    names = set()
+    for category in PopularSpots.spots.values():
+        for spot in category:
+            names.add(spot['name'])
+    return list(names)
+
+all_popular_names = get_all_popular_spot_names()
+
+
+# --- LLM and Helper Functions ---
 
 async def generate_plan_with_llm(preferences: UserPreferences):
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -54,6 +68,8 @@ async def generate_plan_with_llm(preferences: UserPreferences):
         raise HTTPException(status_code=500, detail="Google API key not found.")
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     mode_instruction = "Focus on quirky, offbeat gems." if preferences.mode == 'surprise' else "Focus on iconic, popular landmarks."
+    
+    # --- UPDATED: Add list of popular places to avoid ---
     prompt = f"""
     You are a Dublin tour planner API. Your response must be a valid JSON array of objects.
     Plan a 3-event day in Dublin based on these user preferences:
@@ -61,63 +77,95 @@ async def generate_plan_with_llm(preferences: UserPreferences):
     - Budget: {preferences.budget}
     - Interests: {', '.join(preferences.interests)}
     Instruction: {mode_instruction}
+    
+    CRITICAL INSTRUCTION: Do not suggest any of the following well-known places: {', '.join(all_popular_names)}.
+    
     IMPORTANT: Respond with ONLY the JSON array, nothing else. For free events, use a cost of 0.
     Example format:
     [
         {{"type": "Breakfast", "name": "The Early Bird Café", "cost": 15, "duration": 60}},
-        {{"type": "Activity", "name": "National Museum of Ireland", "cost": 0, "duration": 120}},
-        {{"type": "Lunch", "name": "Pizzeria Rustico", "cost": 25, "duration": 75}}
+        {{"type": "Activity", "name": "A lesser-known gallery", "cost": 0, "duration": 120}},
+        {{"type": "Lunch", "name": "A unique food market", "cost": 25, "duration": 75}}
     ]
     """
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     async with httpx.AsyncClient() as client:
-        try:
-            logging.info("CACHE MISS: Sending request to Gemini API for a full plan.")
-            response = await client.post(api_url, json=payload, timeout=30.0)
-            response.raise_for_status()
-            result = response.json()
-            if result.get('candidates'):
-                llm_response = result['candidates'][0]['content']['parts'][0]['text']
-                logging.info(f"LLM Response: {llm_response}")
-                return llm_response
-            else:
-                logging.error(f"Unexpected API response structure: {result}")
-                raise HTTPException(status_code=500, detail="Could not parse LLM response.")
-        except httpx.RequestError as exc:
-            logging.error(f"An error occurred while requesting the LLM: {exc}")
-            raise HTTPException(status_code=500, detail=f"An error occurred while requesting the LLM: {exc}")
-
-async def get_single_replacement_event(request: RegenerateRequest):
-    api_key = os.getenv("GOOGLE_API_KEY")
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-    mode_instruction = "Suggest a quirky, offbeat alternative." if request.user_preferences.mode == 'surprise' else "Suggest an iconic or popular alternative."
-    existing_event_names = [event.name for event in request.current_plan]
-    prompt = f"""
-    You are a Dublin tour planner API. Your response must be a single valid JSON object.
-    A user wants to replace one event in their plan.
-    - Event to Replace: "{request.current_plan[request.event_index_to_replace].name}"
-    - User Interests: {', '.join(request.user_preferences.interests)}
-    - Planning Mode: {request.user_preferences.mode}
-    Instruction: {mode_instruction} The new event must not be in the existing plan: {', '.join(existing_event_names)}.
-    IMPORTANT: Respond with ONLY the single JSON object, nothing else. For free events, use a cost of 0.
-    Example format:
-    {{"type": "Pub", "name": "The Brazen Head", "cost": 20, "duration": 90}}
-    """
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    async with httpx.AsyncClient() as client:
-        logging.info("CACHE MISS: Sending request to Gemini API for a single replacement event.")
+        logging.info("Sending request to Gemini API for a full plan.")
         response = await client.post(api_url, json=payload, timeout=30.0)
         response.raise_for_status()
         result = response.json()
         if result.get('candidates'):
             llm_response = result['candidates'][0]['content']['parts'][0]['text']
-            logging.info(f"LLM Replacement Response: {llm_response}")
+            logging.info(f"LLM Response: {llm_response}")
             return llm_response
         else:
-            logging.error(f"Unexpected API response for regeneration: {result}")
-            raise HTTPException(status_code=500, detail="Could not parse LLM response for regeneration.")
+            logging.error(f"Unexpected API response structure: {result}")
+            raise HTTPException(status_code=500, detail="Could not parse LLM response.")
 
-# --- API Endpoints with Caching and Limits ---
+async def get_single_replacement_event(request: RegenerateRequest):
+    # --- UPDATED: LLM-first approach for regeneration ---
+    try:
+        logging.info("Attempting to get replacement from LLM first.")
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("API Key not found")
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+        mode_instruction = "Suggest a quirky, offbeat alternative." if request.user_preferences.mode == 'surprise' else "Suggest an iconic or popular alternative."
+        
+        # Combine existing plan names with all popular names for a comprehensive exclusion list
+        existing_event_names = {event.name for event in request.current_plan}
+        exclusion_list = list(existing_event_names.union(set(all_popular_names)))
+
+        prompt = f"""
+        You are a Dublin tour planner API. Your response must be a single valid JSON object.
+        A user wants to replace one event in their plan.
+        - Event to Replace: "{request.current_plan[request.event_index_to_replace].name}"
+        - User Interests: {', '.join(request.user_preferences.interests)}
+        - Planning Mode: {request.user_preferences.mode}
+        Instruction: {mode_instruction}
+        
+        CRITICAL INSTRUCTION: The new event must not be in the following list: {', '.join(exclusion_list)}.
+        
+        IMPORTANT: Respond with ONLY the single JSON object, nothing else. For free events, use a cost of 0.
+        Example format:
+        {{"type": "Pub", "name": "A hidden local pub", "cost": 20, "duration": 90}}
+        """
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        async with httpx.AsyncClient() as client:
+            response = await client.post(api_url, json=payload, timeout=30.0)
+            response.raise_for_status()
+            result = response.json()
+            if result.get('candidates'):
+                llm_response = result['candidates'][0]['content']['parts'][0]['text']
+                logging.info(f"LLM Replacement Response: {llm_response}")
+                cleaned_response = llm_response.strip().replace("```json", "").replace("```", "").strip()
+                new_event_data = json.loads(cleaned_response)
+                return Event(**new_event_data)
+            else:
+                raise ValueError("LLM response did not contain candidates.")
+    except Exception as e:
+        # --- Fallback to local data if LLM fails ---
+        logging.warning(f"LLM call failed for regeneration, attempting local fallback. Error: {e}")
+        event_to_replace = request.current_plan[request.event_index_to_replace]
+        category = "Activity"
+        if "museum" in event_to_replace.type.lower(): category = "Museum"
+        elif "pub" in event_to_replace.type.lower(): category = "Pub"
+        elif any(food_type in event_to_replace.type.lower() for food_type in ["food", "lunch", "dinner", "breakfast"]): category = "Food"
+        
+        potential_replacements = PopularSpots.spots.get(category, [])
+        existing_names = {e.name for e in request.current_plan}
+        valid_choices = [spot for spot in potential_replacements if spot["name"] not in existing_names]
+        
+        if valid_choices:
+            logging.info(f"Found {len(valid_choices)} local candidates for replacement. Using local data.")
+            local_choice = random.choice(valid_choices)
+            return Event(**local_choice)
+        else:
+            logging.error("Local fallback failed: No valid replacements found.")
+            raise HTTPException(status_code=500, detail="Could not find a suitable replacement.")
+
+
+# --- API Endpoints ---
 
 @app.post("/plan", response_model=OutingPlan)
 async def create_outing_plan(preferences: UserPreferences):
@@ -128,30 +176,39 @@ async def create_outing_plan(preferences: UserPreferences):
             logging.info(f"CACHE HIT for key: {cache_key}")
             outing_id = str(uuid.uuid4())
             regeneration_counts[outing_id] = 0
-            new_session_plan = OutingPlan(
-                plan=cached_plan_data.plan,
-                total_cost=cached_plan_data.total_cost,
-                total_duration=cached_plan_data.total_duration,
-                outing_id=outing_id
-            )
+            new_session_plan = OutingPlan(plan=cached_plan_data.plan, total_cost=cached_plan_data.total_cost, total_duration=cached_plan_data.total_duration, outing_id=outing_id)
             return new_session_plan
         else:
             logging.info(f"CACHE EXPIRED for key: {cache_key}")
             del api_cache[cache_key]
     
     logging.info(f"Received /plan request with preferences: {preferences}")
-    llm_text_response = await generate_plan_with_llm(preferences)
     
+    parsed_events = None
+    is_llm_plan = False
     try:
+        llm_text_response = await generate_plan_with_llm(preferences)
         cleaned_response = llm_text_response.strip().replace("```json", "").replace("```", "").strip()
         events_data = json.loads(cleaned_response)
         parsed_events = [Event(**data) for data in events_data]
-    except (json.JSONDecodeError, TypeError) as e:
-        logging.error(f"Failed to decode JSON from LLM response: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to parse plan from LLM.")
+        is_llm_plan = True
+    except Exception as e:
+        logging.error(f"LLM call failed for new plan, attempting local fallback. Error: {e}", exc_info=True)
+        try:
+            logging.info("Attempting to generate plan from local data as a fallback.")
+            parsed_events = [
+                Event(**random.choice(PopularSpots.spots["Food"])),
+                Event(**random.choice(PopularSpots.spots["Activity"])),
+                Event(**random.choice(PopularSpots.spots["Museum"])),
+            ]
+            if len({e.name for e in parsed_events}) != 3:
+                 raise ValueError("Duplicate events selected in fallback.")
+        except (KeyError, IndexError, ValueError) as fallback_e:
+             logging.error(f"Local fallback also failed. Error: {fallback_e}")
+             raise HTTPException(status_code=500, detail="Failed to generate plan from any source.")
 
     if not parsed_events:
-        logging.error("Failed to generate a valid plan after parsing.")
+        logging.error("Failed to generate a valid plan after all attempts.")
         raise HTTPException(status_code=500, detail="Failed to generate a valid plan.")
     
     total_cost = sum(event.cost for event in parsed_events)
@@ -162,8 +219,12 @@ async def create_outing_plan(preferences: UserPreferences):
     
     final_plan = OutingPlan(plan=parsed_events, total_cost=total_cost, total_duration=total_duration, outing_id=outing_id)
     
-    api_cache[cache_key] = (final_plan, time.time())
-    logging.info(f"Successfully created and cached plan with {len(parsed_events)} events. Outing ID: {outing_id}")
+    if is_llm_plan:
+        api_cache[cache_key] = (final_plan, time.time())
+        logging.info(f"Successfully created and cached LLM plan with {len(parsed_events)} events. Outing ID: {outing_id}")
+    else:
+        logging.info(f"Successfully created local fallback plan with {len(parsed_events)} events. Outing ID: {outing_id}")
+
     return final_plan
 
 @app.post("/regenerate-event", response_model=OutingPlan)
@@ -173,7 +234,6 @@ async def regenerate_event(request: RegenerateRequest):
         logging.warning(f"Regeneration limit reached for outing_id: {request.outing_id}")
         raise HTTPException(status_code=403, detail=f"Regeneration limit of {MAX_REGENERATIONS} reached for this outing.")
 
-    # --- FIX: Make the cache key more specific to avoid incorrect hits ---
     event_to_replace_name = request.current_plan[request.event_index_to_replace].name
     cache_key = f"regen-{request.outing_id}-{request.event_index_to_replace}-{event_to_replace_name}"
     
@@ -188,15 +248,7 @@ async def regenerate_event(request: RegenerateRequest):
             del api_cache[cache_key]
 
     logging.info(f"Received /regenerate-event request for outing_id {request.outing_id}, index: {request.event_index_to_replace}")
-    new_event_text = await get_single_replacement_event(request)
-
-    try:
-        cleaned_response = new_event_text.strip().replace("```json", "").replace("```", "").strip()
-        new_event_data = json.loads(cleaned_response)
-        new_event = Event(**new_event_data)
-    except (json.JSONDecodeError, TypeError) as e:
-        logging.error(f"Failed to decode JSON from LLM for regeneration: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to parse regenerated event.")
+    new_event = await get_single_replacement_event(request)
 
     updated_plan_events = request.current_plan
     updated_plan_events[request.event_index_to_replace] = new_event
