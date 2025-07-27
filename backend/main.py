@@ -61,7 +61,33 @@ def get_all_popular_spot_names():
 all_popular_names = get_all_popular_spot_names()
 
 
-# --- FIX: Re-added the missing get_image_for_event function ---
+# --- UPDATED: Helper to dynamically add events to the local dictionary ---
+def add_event_to_local_dictionary(event: Event):
+    """Dynamically adds a new event to the in-memory popular_spots dictionary if it's not already there."""
+    logging.info(f"Checking if '{event.name}' can be added to local dictionary.")
+    category = "Activity" # Default category
+    if "museum" in event.type.lower(): category = "Museum"
+    elif "pub" in event.type.lower(): category = "Pub"
+    elif any(food_type in event.type.lower() for food_type in ["food", "lunch", "dinner", "breakfast", "treat"]): category = "Food"
+
+    if category in PopularSpots.spots:
+        if not any(spot['name'].lower() == event.name.lower() for spot in PopularSpots.spots[category]):
+            new_spot = {
+                "type": event.type,
+                "name": event.name,
+                "cost": event.cost,
+                "duration": event.duration,
+                "image_url": event.image_url # Store the image URL
+            }
+            PopularSpots.spots[category].append(new_spot)
+            logging.info(f"Successfully added '{event.name}' with its image to the '{category}' category in local data.")
+        else:
+            logging.info(f"'{event.name}' already exists in local data. Skipping addition.")
+    else:
+        logging.warning(f"Category '{category}' not found in local data for event '{event.name}'. Cannot add.")
+
+
+# --- Function to get and cache images ---
 async def get_image_for_event(event_name: str) -> str:
     if event_name in image_cache:
         url, timestamp = image_cache[event_name]
@@ -134,7 +160,6 @@ async def generate_plan_with_llm(preferences: UserPreferences):
             logging.error(f"Unexpected API response structure: {result}")
             raise HTTPException(status_code=500, detail="Could not parse LLM response.")
 
-# --- NEW: Function to get replacement from LLM (with local fallback) ---
 async def get_llm_replacement_event(request: RegenerateRequest) -> Event:
     try:
         logging.info("Attempting to get replacement from LLM first.")
@@ -169,14 +194,14 @@ async def get_llm_replacement_event(request: RegenerateRequest) -> Event:
                 logging.info(f"LLM Replacement Response: {llm_response}")
                 cleaned_response = llm_response.strip().replace("```json", "").replace("```", "").strip()
                 new_event_data = json.loads(cleaned_response)
-                return Event(**new_event_data)
+                new_event = Event(**new_event_data)
+                return new_event
             else:
                 raise ValueError("LLM response did not contain candidates.")
     except Exception as e:
         logging.warning(f"LLM call failed for regeneration, attempting local fallback. Error: {e}")
-        return get_local_replacement_event(request) # Fallback to local
+        return get_local_replacement_event(request)
 
-# --- NEW: Function to get replacement from local data ONLY ---
 def get_local_replacement_event(request: RegenerateRequest) -> Optional[Event]:
     logging.info("Attempting to find a replacement from local data.")
     event_to_replace = request.current_plan[request.event_index_to_replace]
@@ -247,6 +272,9 @@ async def create_outing_plan(preferences: UserPreferences):
     for event in parsed_events:
         if not event.image_url:
             event.image_url = await get_image_for_event(event.name)
+        # Add the event to our local dictionary if it came from the LLM
+        if is_llm_plan:
+            add_event_to_local_dictionary(event)
 
     total_cost = sum(event.cost for event in parsed_events)
     total_duration = sum(event.duration for event in parsed_events)
@@ -287,12 +315,11 @@ async def regenerate_event(request: RegenerateRequest):
     logging.info(f"Received /regenerate-event request for outing_id {request.outing_id}, index: {request.event_index_to_replace}. Count: {current_regen_count}")
     
     new_event = None
-    # --- UPDATED: Tiered regeneration logic ---
+    # --- Tiered regeneration logic ---
     if current_regen_count < LOCAL_REGEN_LIMIT:
         logging.info("Attempting local-first regeneration.")
         new_event = get_local_replacement_event(request)
         if not new_event:
-            # Escalate to LLM if local fails
             logging.warning("Local-first failed, escalating to LLM.")
             new_event = await get_llm_replacement_event(request)
     else:
@@ -304,6 +331,9 @@ async def regenerate_event(request: RegenerateRequest):
 
     if not new_event.image_url:
         new_event.image_url = await get_image_for_event(new_event.name)
+    
+    # --- NEW: Add the newly generated event to our local data ---
+    add_event_to_local_dictionary(new_event)
 
     updated_plan_events = request.current_plan
     updated_plan_events[request.event_index_to_replace] = new_event
