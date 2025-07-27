@@ -20,33 +20,29 @@ from utils.popular_spots import PopularSpots
 
 # --- Cache and Limit Configuration ---
 api_cache: Dict[str, Tuple[OutingPlan, float]] = {}
-CACHE_TTL_SECONDS = 86400 # 24 hours
+image_cache: Dict[str, str] = {}
+CACHE_TTL_SECONDS = 86400
 regeneration_counts: Dict[str, int] = {}
 MAX_REGENERATIONS = 5
-LOCAL_REGEN_LIMIT = 3 # First 3 regenerations will prioritize local data
+LOCAL_REGEN_LIMIT = 3
 
-# --- NEW: Persistent Image Cache Setup ---
+# --- Persistent Image Cache Setup ---
 IMAGE_CACHE_FILE = "learned_images.json"
-image_cache: Dict[str, str] = {} # Will now store URL directly
 
 def load_image_cache():
-    """Loads the image cache from the JSON file at startup."""
     if os.path.exists(IMAGE_CACHE_FILE):
         with open(IMAGE_CACHE_FILE, 'r') as f:
             try:
                 return json.load(f)
             except json.JSONDecodeError:
-                return {} # Return empty dict if file is corrupted
+                return {}
     return {}
 
 def save_image_cache():
-    """Saves the current in-memory image cache to the JSON file."""
     with open(IMAGE_CACHE_FILE, 'w') as f:
         json.dump(image_cache, f, indent=2)
 
-# Load the cache when the application starts
 image_cache = load_image_cache()
-
 
 # Configure Logging
 log_directory = "logs"
@@ -68,9 +64,26 @@ logger.addHandler(console_handler)
 load_dotenv()
 app = FastAPI()
 
-# CORS Middleware
-origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
-app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+# --- UPDATED: Dynamic CORS Middleware ---
+# This will work for both local development and your Vercel deployment.
+origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+# Vercel provides an environment variable with the deployment's URL
+vercel_url = os.getenv("VERCEL_URL")
+if vercel_url:
+    # The URL from Vercel doesn't include the protocol, so we add it
+    origins.append(f"https://{vercel_url}")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- Helper to get all popular spot names ---
 def get_all_popular_spot_names():
@@ -85,9 +98,8 @@ all_popular_names = get_all_popular_spot_names()
 
 # --- Helper to dynamically add events to the local dictionary ---
 def add_event_to_local_dictionary(event: Event):
-    """Dynamically adds a new event to the in-memory popular_spots dictionary if it's not already there."""
     logging.info(f"Checking if '{event.name}' can be added to local dictionary.")
-    category = "Activity" # Default category
+    category = "Activity"
     if "museum" in event.type.lower(): category = "Museum"
     elif "pub" in event.type.lower(): category = "Pub"
     elif any(food_type in event.type.lower() for food_type in ["food", "lunch", "dinner", "breakfast", "treat"]): category = "Food"
@@ -109,7 +121,7 @@ def add_event_to_local_dictionary(event: Event):
         logging.warning(f"Category '{category}' not found in local data for event '{event.name}'. Cannot add.")
 
 
-# --- UPDATED: Function to get images with persistent caching ---
+# --- Function to get and cache images ---
 async def get_image_for_event(event_name: str) -> str:
     if event_name in image_cache:
         logging.info(f"IMAGE CACHE HIT for: {event_name}")
@@ -132,8 +144,8 @@ async def get_image_for_event(event_name: str) -> str:
             data = response.json()
             if data['photos']:
                 image_url = data['photos'][0]['src']['tiny']
-                image_cache[event_name] = image_url # Add to in-memory cache
-                save_image_cache() # Save updated cache to file
+                image_cache[event_name] = image_url
+                save_image_cache()
                 return image_url
     except Exception as e:
         logging.error(f"Failed to fetch image for '{event_name}'. Error: {e}")
@@ -152,14 +164,14 @@ async def generate_plan_with_llm(preferences: UserPreferences):
     mode_instruction = "Focus on quirky, offbeat gems." if preferences.mode == 'surprise' else "Focus on iconic, popular landmarks."
     
     prompt = f"""
-    You are a Dublin tour planner API. Your response must be a valid JSON array of objects.
+    You are a Dublin tour planner API. Your entire response must be only the raw JSON text.
     Plan a 3-event day in Dublin based on these user preferences:
     - Mode: {preferences.mode}
     - Budget: {preferences.budget}
     - Interests: {', '.join(preferences.interests)}
     Instruction: {mode_instruction}
     CRITICAL INSTRUCTION: Do not suggest any of the following well-known places: {', '.join(all_popular_names)}.
-    IMPORTANT: Respond with ONLY the JSON array, nothing else. For free events, use a cost of 0.
+    IMPORTANT: Respond with ONLY a valid JSON array of objects, with no introductory text, no markdown, and no explanations.
     Example format:
     [
         {{"type": "Breakfast", "name": "The Early Bird Café", "cost": 15, "duration": 60}},
@@ -194,14 +206,14 @@ async def get_llm_replacement_event(request: RegenerateRequest) -> Event:
         exclusion_list = list(existing_event_names.union(set(all_popular_names)))
 
         prompt = f"""
-        You are a Dublin tour planner API. Your response must be a single valid JSON object.
+        You are a Dublin tour planner API. Your entire response must be only the raw JSON text.
         A user wants to replace one event in their plan.
         - Event to Replace: "{request.current_plan[request.event_index_to_replace].name}"
         - User Interests: {', '.join(request.user_preferences.interests)}
         - Planning Mode: {request.user_preferences.mode}
         Instruction: {mode_instruction}
         CRITICAL INSTRUCTION: The new event must not be in the following list: {', '.join(exclusion_list)}.
-        IMPORTANT: Respond with ONLY the single JSON object, nothing else. For free events, use a cost of 0.
+        IMPORTANT: Respond with ONLY a single valid JSON object, with no introductory text, no markdown, and no explanations.
         Example format:
         {{"type": "Pub", "name": "A hidden local pub", "cost": 20, "duration": 90}}
         """
@@ -371,6 +383,3 @@ async def regenerate_event(request: RegenerateRequest):
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the OneStopOutings API"}
-
-from mangum import Mangum
-handler = Mangum(app)  # Required for Vercel Python runtime
