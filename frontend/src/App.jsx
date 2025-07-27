@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react'; // Import useEffect
 import { MapPin, DollarSign, Users, Clock, Coffee, Utensils, Leaf, Music, Film, Beer, ShoppingBag, LoaderCircle, AlertCircle, Sparkles, RefreshCw, Dice5, Star } from 'lucide-react';
 import './App.css';
 
@@ -107,7 +107,6 @@ const PlanDisplay = ({ plan, error, loading, onRegenerate, regeneratingIndex }) 
         {plan.plan.map((event, index) => (
           <div key={index} className="itinerary-card">
             <div className="card-content">
-              {/* --- UPDATED: Use the image_url for the background --- */}
               <div 
                 className="image-placeholder" 
                 style={{ backgroundImage: event.image_url ? `url(${event.image_url})` : 'none' }}
@@ -140,6 +139,12 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [regeneratingIndex, setRegeneratingIndex] = useState(null);
+
+  // --- NEW: useEffect to change the background based on the mode ---
+  useEffect(() => {
+    document.body.className = ''; // Clear previous classes
+    document.body.classList.add(`theme-${mode}`);
+  }, [mode]);
 
   const toggleInterest = (interest) => setInterests(prev => prev.includes(interest) ? prev.filter(i => i !== interest) : [...prev, interest]);
 

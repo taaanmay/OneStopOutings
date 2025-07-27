@@ -4,12 +4,27 @@
 :root {
   --primary-color: #4f46e5; /* A modern purple */
   --secondary-color: #6b7280;
-  --background-color: #f3f4f6; /* New background */
   --surface-color: #ffffff;
   --text-color: #111827;
   --border-color: #e5e7eb;
   --shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0,0,0,0.08);
+  
+  /* --- NEW: Default Gradient Background --- */
+  --gradient-start: #f3f4f6;
+  --gradient-end: #e5e7eb;
 }
+
+/* --- NEW: Theme-specific Gradients --- */
+.theme-surprise {
+  --gradient-start: #fdf4ff; /* Light Pink */
+  --gradient-end: #e9d5ff;   /* Light Purple */
+}
+
+.theme-must-see {
+  --gradient-start: #f0f9ff; /* Light Blue */
+  --gradient-end: #e0f2fe;   /* Lighter Blue */
+}
+
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -18,7 +33,9 @@
 body {
   margin: 0;
   font-family: 'Inter', sans-serif;
-  background-color: var(--background-color);
+  /* --- UPDATED: Apply the gradient and transition --- */
+  background-image: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+  transition: background-image 0.8s ease-in-out;
   color: var(--text-color);
 }
 
@@ -35,6 +52,8 @@ body {
   padding: 1rem 2rem;
   text-align: center;
   border-bottom: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.8); /* Add a subtle transparency */
+  backdrop-filter: blur(10px); /* Frosted glass effect */
 }
 
 .logo-container {
@@ -65,15 +84,15 @@ body {
   grid-template-columns: minmax(350px, 450px) 1fr;
   gap: 2rem;
   padding: 2rem;
-  width: 100vw;           /* use full viewport width */
-  max-width: 100%;        /* remove constraint */
-  margin: 0;              /* remove horizontal centering */
+  width: 100vw;
+  max-width: 100%;
+  margin: 0;
   flex-grow: 1;
 }
 
-@media (min-width: 992px) {
+@media (max-width: 992px) {
   .main-content {
-    grid-template-columns: 450px 1fr;
+    grid-template-columns: 1fr;
   }
 }
 
@@ -272,6 +291,8 @@ body {
   background: var(--background-color);
   border-radius: 8px;
   flex-shrink: 0;
+  background-size: cover;
+  background-position: center;
 }
 .event-details {
   flex-grow: 1;
