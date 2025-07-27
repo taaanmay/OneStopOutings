@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 class UserPreferences(BaseModel):
     """
@@ -16,13 +16,14 @@ class Event(BaseModel):
     name: str
     cost: int
     duration: int
+    image_url: Optional[str] = None # NEW: To hold the event image URL
 
 class OutingPlan(BaseModel):
     """Defines the final plan we send back to the user."""
     plan: List[Event]
     total_cost: int
     total_duration: int
-    outing_id: str # NEW: Unique ID for the outing session
+    outing_id: str
 
 class RegenerateRequest(BaseModel):
     """
@@ -32,4 +33,4 @@ class RegenerateRequest(BaseModel):
     current_plan: List[Event]
     event_index_to_replace: int
     user_preferences: UserPreferences
-    outing_id: str # NEW: To track the outing session
+    outing_id: str

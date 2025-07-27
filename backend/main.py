@@ -20,6 +20,7 @@ from utils.popular_spots import PopularSpots
 
 # --- Cache and Limit Configuration ---
 api_cache: Dict[str, Tuple[OutingPlan, float]] = {}
+image_cache: Dict[str, Tuple[str, float]] = {} # NEW: Cache for image URLs
 CACHE_TTL_SECONDS = 86400 # 24 hours
 regeneration_counts: Dict[str, int] = {}
 MAX_REGENERATIONS = 5
@@ -48,7 +49,7 @@ app = FastAPI()
 origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# --- NEW: Helper to get all popular spot names ---
+# --- Helper to get all popular spot names ---
 def get_all_popular_spot_names():
     names = set()
     for category in PopularSpots.spots.values():
@@ -57,6 +58,41 @@ def get_all_popular_spot_names():
     return list(names)
 
 all_popular_names = get_all_popular_spot_names()
+
+
+# --- NEW: Function to get and cache images ---
+async def get_image_for_event(event_name: str) -> str:
+    if event_name in image_cache:
+        url, timestamp = image_cache[event_name]
+        if time.time() - timestamp < CACHE_TTL_SECONDS:
+            logging.info(f"IMAGE CACHE HIT for: {event_name}")
+            return url
+    
+    logging.info(f"IMAGE CACHE MISS for: {event_name}. Fetching from Pexels.")
+    pexels_api_key = os.getenv("PEXELS_API_KEY")
+    if not pexels_api_key:
+        logging.warning("PEXELS_API_KEY not found. Cannot fetch images.")
+        return "" # Return empty string if no key
+
+    headers = {"Authorization": pexels_api_key}
+    # Search for the event name + Dublin for more relevant results
+    query = f"{event_name} Dublin"
+    url = f"https://api.pexels.com/v1/search?query={query}&per_page=1"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            if data['photos']:
+                # We use the 'tiny' version for the preview icon
+                image_url = data['photos'][0]['src']['tiny']
+                image_cache[event_name] = (image_url, time.time())
+                return image_url
+    except Exception as e:
+        logging.error(f"Failed to fetch image for '{event_name}'. Error: {e}")
+    
+    return "" # Return empty string on failure
 
 
 # --- LLM and Helper Functions ---
@@ -69,7 +105,6 @@ async def generate_plan_with_llm(preferences: UserPreferences):
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     mode_instruction = "Focus on quirky, offbeat gems." if preferences.mode == 'surprise' else "Focus on iconic, popular landmarks."
     
-    # --- UPDATED: Add list of popular places to avoid ---
     prompt = f"""
     You are a Dublin tour planner API. Your response must be a valid JSON array of objects.
     Plan a 3-event day in Dublin based on these user preferences:
@@ -77,9 +112,7 @@ async def generate_plan_with_llm(preferences: UserPreferences):
     - Budget: {preferences.budget}
     - Interests: {', '.join(preferences.interests)}
     Instruction: {mode_instruction}
-    
     CRITICAL INSTRUCTION: Do not suggest any of the following well-known places: {', '.join(all_popular_names)}.
-    
     IMPORTANT: Respond with ONLY the JSON array, nothing else. For free events, use a cost of 0.
     Example format:
     [
@@ -103,7 +136,6 @@ async def generate_plan_with_llm(preferences: UserPreferences):
             raise HTTPException(status_code=500, detail="Could not parse LLM response.")
 
 async def get_single_replacement_event(request: RegenerateRequest):
-    # --- UPDATED: LLM-first approach for regeneration ---
     try:
         logging.info("Attempting to get replacement from LLM first.")
         api_key = os.getenv("GOOGLE_API_KEY")
@@ -112,7 +144,6 @@ async def get_single_replacement_event(request: RegenerateRequest):
         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
         mode_instruction = "Suggest a quirky, offbeat alternative." if request.user_preferences.mode == 'surprise' else "Suggest an iconic or popular alternative."
         
-        # Combine existing plan names with all popular names for a comprehensive exclusion list
         existing_event_names = {event.name for event in request.current_plan}
         exclusion_list = list(existing_event_names.union(set(all_popular_names)))
 
@@ -123,9 +154,7 @@ async def get_single_replacement_event(request: RegenerateRequest):
         - User Interests: {', '.join(request.user_preferences.interests)}
         - Planning Mode: {request.user_preferences.mode}
         Instruction: {mode_instruction}
-        
         CRITICAL INSTRUCTION: The new event must not be in the following list: {', '.join(exclusion_list)}.
-        
         IMPORTANT: Respond with ONLY the single JSON object, nothing else. For free events, use a cost of 0.
         Example format:
         {{"type": "Pub", "name": "A hidden local pub", "cost": 20, "duration": 90}}
@@ -144,7 +173,6 @@ async def get_single_replacement_event(request: RegenerateRequest):
             else:
                 raise ValueError("LLM response did not contain candidates.")
     except Exception as e:
-        # --- Fallback to local data if LLM fails ---
         logging.warning(f"LLM call failed for regeneration, attempting local fallback. Error: {e}")
         event_to_replace = request.current_plan[request.event_index_to_replace]
         category = "Activity"
@@ -211,6 +239,10 @@ async def create_outing_plan(preferences: UserPreferences):
         logging.error("Failed to generate a valid plan after all attempts.")
         raise HTTPException(status_code=500, detail="Failed to generate a valid plan.")
     
+    # --- NEW: Fetch images for each event in the plan ---
+    for event in parsed_events:
+        event.image_url = await get_image_for_event(event.name)
+
     total_cost = sum(event.cost for event in parsed_events)
     total_duration = sum(event.duration for event in parsed_events)
     
@@ -249,6 +281,9 @@ async def regenerate_event(request: RegenerateRequest):
 
     logging.info(f"Received /regenerate-event request for outing_id {request.outing_id}, index: {request.event_index_to_replace}")
     new_event = await get_single_replacement_event(request)
+    
+    # --- NEW: Fetch image for the new event ---
+    new_event.image_url = await get_image_for_event(new_event.name)
 
     updated_plan_events = request.current_plan
     updated_plan_events[request.event_index_to_replace] = new_event

@@ -107,7 +107,11 @@ const PlanDisplay = ({ plan, error, loading, onRegenerate, regeneratingIndex }) 
         {plan.plan.map((event, index) => (
           <div key={index} className="itinerary-card">
             <div className="card-content">
-              <div className="image-placeholder"></div>
+              {/* --- UPDATED: Use the image_url for the background --- */}
+              <div 
+                className="image-placeholder" 
+                style={{ backgroundImage: event.image_url ? `url(${event.image_url})` : 'none' }}
+              ></div>
               <div className="event-details">
                 <span className="event-type">{event.type}</span>
                 <h4 className="event-name">{event.name}</h4>
@@ -164,7 +168,6 @@ function App() {
   };
 
   const handleRegenerate = async (indexToReplace) => {
-    // --- FIX: Ensure we have a plan and an outing_id before proceeding ---
     if (!plan || !plan.outing_id) {
       setError("Cannot regenerate without a valid plan. Please generate a new plan.");
       return;
@@ -173,7 +176,6 @@ function App() {
     setRegeneratingIndex(indexToReplace);
     setError(null);
 
-    // --- FIX: Add the outing_id to the payload ---
     const payload = {
       current_plan: plan.plan,
       event_index_to_replace: indexToReplace,
@@ -182,7 +184,7 @@ function App() {
         interests: interests,
         mode: mode,
       },
-      outing_id: plan.outing_id, // This was missing
+      outing_id: plan.outing_id,
     };
 
     try {
