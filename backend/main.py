@@ -20,6 +20,7 @@ from utils.popular_spots import PopularSpots
 
 # --- Cache and Limit Configuration ---
 api_cache: Dict[str, Tuple[OutingPlan, float]] = {}
+image_cache: Dict[str, Tuple[str, float]] = {} # Cache for image URLs
 CACHE_TTL_SECONDS = 86400 # 24 hours
 regeneration_counts: Dict[str, int] = {}
 MAX_REGENERATIONS = 5
@@ -58,6 +59,39 @@ def get_all_popular_spot_names():
     return list(names)
 
 all_popular_names = get_all_popular_spot_names()
+
+
+# --- FIX: Re-added the missing get_image_for_event function ---
+async def get_image_for_event(event_name: str) -> str:
+    if event_name in image_cache:
+        url, timestamp = image_cache[event_name]
+        if time.time() - timestamp < CACHE_TTL_SECONDS:
+            logging.info(f"IMAGE CACHE HIT for: {event_name}")
+            return url
+    
+    logging.info(f"IMAGE CACHE MISS for: {event_name}. Fetching from Pexels.")
+    pexels_api_key = os.getenv("PEXELS_API_KEY")
+    if not pexels_api_key:
+        logging.warning("PEXELS_API_KEY not found. Cannot fetch images.")
+        return ""
+
+    headers = {"Authorization": pexels_api_key}
+    query = f"{event_name} Dublin"
+    url = f"https://api.pexels.com/v1/search?query={query}&per_page=1"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            if data['photos']:
+                image_url = data['photos'][0]['src']['tiny']
+                image_cache[event_name] = (image_url, time.time())
+                return image_url
+    except Exception as e:
+        logging.error(f"Failed to fetch image for '{event_name}'. Error: {e}")
+    
+    return ""
 
 
 # --- LLM and Helper Functions ---
