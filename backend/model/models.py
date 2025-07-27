@@ -8,7 +8,7 @@ class UserPreferences(BaseModel):
     """
     budget: int
     interests: List[str]
-    mode: str  # 'surprise' or 'must-see'
+    mode: str
 
 class Event(BaseModel):
     """Defines a single event in the outing."""
@@ -22,12 +22,14 @@ class OutingPlan(BaseModel):
     plan: List[Event]
     total_cost: int
     total_duration: int
+    outing_id: str # NEW: Unique ID for the outing session
 
 class RegenerateRequest(BaseModel):
     """
     Defines the data needed to regenerate a single event.
-    It includes the full user preferences so we can respect the 'mode'.
+    It includes the full user preferences and the outing_id to track the session.
     """
     current_plan: List[Event]
     event_index_to_replace: int
     user_preferences: UserPreferences
+    outing_id: str # NEW: To track the outing session

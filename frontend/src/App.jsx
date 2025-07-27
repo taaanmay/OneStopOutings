@@ -145,11 +145,10 @@ function App() {
     setError(null);
     setPlan(null);
 
-    // --- FIX: Add the 'mode' to the payload ---
     const preferences = {
       budget: parseInt(budget),
       interests: interests,
-      mode: mode, // This was missing
+      mode: mode,
     };
 
     try {
@@ -165,18 +164,25 @@ function App() {
   };
 
   const handleRegenerate = async (indexToReplace) => {
+    // --- FIX: Ensure we have a plan and an outing_id before proceeding ---
+    if (!plan || !plan.outing_id) {
+      setError("Cannot regenerate without a valid plan. Please generate a new plan.");
+      return;
+    }
+
     setRegeneratingIndex(indexToReplace);
     setError(null);
 
-    // --- FIX: Add the 'mode' to the user_preferences payload ---
+    // --- FIX: Add the outing_id to the payload ---
     const payload = {
       current_plan: plan.plan,
       event_index_to_replace: indexToReplace,
       user_preferences: {
         budget: parseInt(budget),
         interests: interests,
-        mode: mode, // This was missing
+        mode: mode,
       },
+      outing_id: plan.outing_id, // This was missing
     };
 
     try {
