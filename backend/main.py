@@ -258,7 +258,7 @@ def get_local_replacement_event(request: RegenerateRequest) -> Optional[Event]:
 
 # --- API Endpoints ---
 
-@app.post("/plan", response_model=OutingPlan)
+@app.post("/api/plan", response_model=OutingPlan)
 async def create_outing_plan(preferences: UserPreferences):
     logging.info(f"Creating outing plan with preferences: {preferences}")
     cache_key = f"plan-{preferences.mode}-{preferences.budget}-{'-'.join(sorted(preferences.interests))}"
@@ -325,7 +325,7 @@ async def create_outing_plan(preferences: UserPreferences):
 
     return final_plan
 
-@app.post("/regenerate-event", response_model=OutingPlan)
+@app.post("/api/regenerate-event", response_model=OutingPlan)
 async def regenerate_event(request: RegenerateRequest):
     current_regen_count = regeneration_counts.get(request.outing_id, 0)
     if current_regen_count >= MAX_REGENERATIONS:
@@ -380,6 +380,6 @@ async def regenerate_event(request: RegenerateRequest):
     
     return final_plan
 
-@app.get("/")
+@app.get("/api")
 def read_root():
     return {"message": "Welcome to the OneStopOutings API"}
