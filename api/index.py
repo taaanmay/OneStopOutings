@@ -27,7 +27,7 @@ MAX_REGENERATIONS = 5
 LOCAL_REGEN_LIMIT = 3
 
 # --- Persistent Image Cache Setup ---
-IMAGE_CACHE_FILE = "learned_images.json"
+IMAGE_CACHE_FILE = "/tmp/learned_images.json"
 
 def load_image_cache():
     if os.path.exists(IMAGE_CACHE_FILE):
@@ -45,7 +45,7 @@ def save_image_cache():
 image_cache = load_image_cache()
 
 # Configure Logging
-log_directory = "logs"
+log_directory = "/tmp/logs"
 if not os.path.exists(log_directory):
     os.makedirs(log_directory)
 log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
