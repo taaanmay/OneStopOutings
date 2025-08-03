@@ -12,10 +12,10 @@ from dotenv import load_dotenv
 from typing import List, Dict, Tuple, Optional
 
 # Import the models
-from model.models import UserPreferences, Event, OutingPlan, RegenerateRequest
+from backend.model.models import UserPreferences, Event, OutingPlan, RegenerateRequest
 
 # --- Local data dictionary ---
-from utils.popular_spots import PopularSpots
+from backend.utils.popular_spots import PopularSpots
 
 
 # --- Cache and Limit Configuration ---
