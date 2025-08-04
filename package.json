@@ -1,0 +1,12 @@
+{
+  "name": "onestopoutings-monorepo",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev"
+  },
+  "devDependencies": {}
+}
